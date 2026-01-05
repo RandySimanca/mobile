@@ -358,6 +358,7 @@ class ApiService {
         const ventaRef = doc(collection(db, 'VENTAS'));
         transaction.set(ventaRef, {
           ...venta,
+          abono: venta.abono || 0,
           fecha_creacion: new Date().toISOString()
         });
 
@@ -386,6 +387,54 @@ class ApiService {
       const querySnapshot = await getDocs(q);
       const ventas = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       return { success: true, data: ventas };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  async updateVenta(id: string, nuevosDatos: any): Promise<ApiResponse<any>> {
+    try {
+      await runTransaction(db, async (transaction) => {
+        const ventaRef = doc(db, 'VENTAS', id);
+        const ventaSnap = await transaction.get(ventaRef);
+        if (!ventaSnap.exists()) throw new Error('Venta no encontrada');
+        
+        const ventaAnterior = ventaSnap.data();
+        const loteId = nuevosDatos.lote_id || ventaAnterior.lote_id;
+        const loteRef = doc(db, 'LOTE', loteId);
+        const loteSnap = await transaction.get(loteRef);
+        if (!loteSnap.exists()) throw new Error('Lote no encontrado');
+        
+        const loteData = loteSnap.data();
+        let poblacionActual = loteData.poblacion_actual ?? loteData.poblacion_inicial;
+        
+        // Revertir cantidad anterior
+        poblacionActual += (ventaAnterior.cantidad || 0);
+        
+        const nuevaCantidad = nuevosDatos.cantidad ?? ventaAnterior.cantidad;
+        if (nuevaCantidad > poblacionActual) {
+          throw new Error(`No hay suficientes aves. Disponibles: ${poblacionActual}`);
+        }
+        
+        const nuevaPoblacionFinal = poblacionActual - nuevaCantidad;
+        const updateLoteData: any = { poblacion_actual: nuevaPoblacionFinal };
+        
+        if (nuevaPoblacionFinal === 0) {
+          updateLoteData.activo = false;
+          updateLoteData.fecha_finalizacion = new Date().toISOString();
+        } else if (nuevaPoblacionFinal > 0 && !loteData.activo) {
+          updateLoteData.activo = true;
+          updateLoteData.fecha_finalizacion = null;
+        }
+        
+        transaction.update(loteRef, updateLoteData);
+        transaction.update(ventaRef, {
+          ...nuevosDatos,
+          fecha_modificacion: new Date().toISOString(),
+          modificado_por: this.currentUser?.id || 'unknown'
+        });
+      });
+      return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message };
     }
@@ -800,7 +849,22 @@ async deleteRegistroDiario(id: string): Promise<ApiResponse<any>> {
     try {
       // 1. Obtener todas las ventas (Ingresos)
       const ventasSnap = await getDocs(collection(db, 'VENTAS'));
-      const totalIngresos = ventasSnap.docs.reduce((sum, doc) => sum + (doc.data().total || 0), 0);
+      
+      let totalIngresosContado = 0;
+      let cuentasPorCobrar = 0;
+
+      ventasSnap.docs.forEach(doc => {
+        const data = doc.data();
+        const total = data.total || 0;
+        const abono = data.abono || 0;
+
+        if (data.forma_pago === 'CREDITO') {
+          totalIngresosContado += abono;
+          cuentasPorCobrar += (total - abono);
+        } else {
+          totalIngresosContado += total;
+        }
+      });
 
       // 2. Obtener todos los gastos (Egresos) y clasificarlos
       const gastosSnap = await getDocs(collection(db, 'GASTOS'));
@@ -839,23 +903,68 @@ async deleteRegistroDiario(id: string): Promise<ApiResponse<any>> {
         return sum + ((data.stock_actual || 0) * (data.precio_unitario || 0));
       }, 0);
 
-      // 4. Obtener datos operativos
+      // 4. Obtener datos operativos y registros diarios para mortalidad
       const lotesSnap = await getDocs(collection(db, 'LOTE'));
       const totalLotes = lotesSnap.size;
       const totalAves = lotesSnap.docs.reduce((sum, doc) => sum + (doc.data().poblacion_inicial || 0), 0);
 
+      const registrosSnap = await getDocs(collection(db, 'REGISTRO_DIARIO_PRODUCCION'));
+      
+      // 5. Agrupar datos por lote para el reporte detallado
+      const detallesLotes: any = {};
+
+      lotesSnap.docs.forEach(doc => {
+        const data = doc.data();
+        detallesLotes[doc.id] = {
+          id: doc.id,
+          nombre: data.nombre,
+          finca: data.finca_nombre || 'N/A',
+          ventas_totales: 0,
+          abonos_recibidos: 0,
+          cuentas_por_cobrar: 0,
+          mortalidad_total: 0,
+          poblacion_inicial: data.poblacion_inicial || 0,
+          poblacion_actual: data.poblacion_actual ?? data.poblacion_inicial
+        };
+      });
+
+      // Sumar ventas por lote
+      ventasSnap.docs.forEach(doc => {
+        const data = doc.data();
+        const loteId = data.lote_id;
+        if (detallesLotes[loteId]) {
+          const total = data.total || 0;
+          const abono = data.abono || 0;
+          detallesLotes[loteId].ventas_totales += total;
+          detallesLotes[loteId].abonos_recibidos += abono;
+          if (data.forma_pago === 'CREDITO') {
+            detallesLotes[loteId].cuentas_por_cobrar += (total - abono);
+          }
+        }
+      });
+
+      // Sumar mortalidad por lote
+      registrosSnap.docs.forEach(doc => {
+        const data = doc.data();
+        const loteId = data.lote_id;
+        if (detallesLotes[loteId]) {
+          detallesLotes[loteId].mortalidad_total += (data.mortalidad_dia || 0);
+        }
+      });
+
       // Cálculos Financieros
-      const cajaActual = totalIngresos - totalEgresosCaja;
-      const patrimonioNeto = cajaActual + valorInventario;
-      const utilidadOperativa = totalIngresos - gastosOperativos - consumosRegistrados;
-      const margenOperativo = totalIngresos > 0 ? (utilidadOperativa / totalIngresos) * 100 : 0;
+      const cajaActual = totalIngresosContado - totalEgresosCaja;
+      const patrimonioNeto = cajaActual + valorInventario + cuentasPorCobrar;
+      const utilidadOperativa = (totalIngresosContado + cuentasPorCobrar) - gastosOperativos - consumosRegistrados;
+      const margenOperativo = (totalIngresosContado + cuentasPorCobrar) > 0 ? (utilidadOperativa / (totalIngresosContado + cuentasPorCobrar)) * 100 : 0;
 
       return {
         success: true,
         data: {
           // Estado de Caja (Dinero Real)
           flujo_caja: {
-            total_ingresos: totalIngresos,
+            total_ingresos_contado: totalIngresosContado,
+            cuentas_por_cobrar: cuentasPorCobrar,
             gastos_operativos: gastosOperativos,
             inversion_insumos: inversionInsumos,
             total_egresos_caja: totalEgresosCaja,
@@ -865,6 +974,7 @@ async deleteRegistroDiario(id: string): Promise<ApiResponse<any>> {
           balance: {
             efectivo: cajaActual,
             inventario: valorInventario,
+            cuentas_por_cobrar: cuentasPorCobrar,
             activo_total: patrimonioNeto,
           },
           // Resultado Operativo
@@ -877,7 +987,9 @@ async deleteRegistroDiario(id: string): Promise<ApiResponse<any>> {
           resumen: {
             total_lotes: totalLotes,
             total_aves_inicial: totalAves
-          }
+          },
+          // Detalles por lote para PDF
+          detalles_lotes: Object.values(detallesLotes)
         }
       };
     } catch (error: any) {
@@ -905,13 +1017,22 @@ async deleteRegistroDiario(id: string): Promise<ApiResponse<any>> {
         .filter((r: any) => r.fecha && r.fecha.startsWith(hoyIso))
         .reduce((sum: number, r: any) => sum + (r.huevos_totales || 0), 0);
 
+      // Calcular mortalidad de los últimos 7 días
+      const sieteDiasAtras = new Date();
+      sieteDiasAtras.setDate(sieteDiasAtras.getDate() - 7);
+      const sieteDiasAtrasIso = sieteDiasAtras.toISOString().split('T')[0];
+
+      const mortalidadSemanal = registros
+        .filter((r: any) => r.fecha && r.fecha >= sieteDiasAtrasIso)
+        .reduce((sum: number, r: any) => sum + (r.mortalidad_dia || 0), 0);
+
       return {
         success: true,
         data: {
           totalAves,
           lotesActivos: lotes.length,
           produccionHoy,
-          mortalidadSemanal: 0 // Simplificado para el ejemplo
+          mortalidadSemanal
         }
       };
     } catch (error: any) {

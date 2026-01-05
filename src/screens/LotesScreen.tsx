@@ -110,9 +110,18 @@ export default function LotesScreen({ navigation }: Props) {
                 </Text>
             </View>
             <View style={styles.loteDetails}>
-                <Text style={styles.detailText}>Población: {item.poblacion_actual} / {item.poblacion_inicial}</Text>
-                <Text style={styles.detailText}>Finca: {item.finca_nombre || 'N/A'}</Text>
-                <Text style={styles.detailText}>Galpón: {item.galpon_nombre || 'N/A'}</Text>
+                <View style={styles.detailRow}>
+                    <Ionicons name="people-outline" size={16} color="#7f8c8d" />
+                    <Text style={styles.detailText}>Población: {item.poblacion_actual} / {item.poblacion_inicial}</Text>
+                </View>
+                <View style={styles.detailRow}>
+                    <Ionicons name="business-outline" size={16} color="#7f8c8d" />
+                    <Text style={styles.detailText}>Finca: <Text style={styles.boldDetail}>{item.finca_nombre || 'N/A'}</Text></Text>
+                </View>
+                <View style={styles.detailRow}>
+                    <Ionicons name="home-outline" size={16} color="#7f8c8d" />
+                    <Text style={styles.detailText}>Galpón: <Text style={styles.boldDetail}>{item.galpon_nombre || 'N/A'}</Text></Text>
+                </View>
             </View>
             {isAdmin && (
                 <View style={styles.actions}>
@@ -257,7 +266,17 @@ const styles = StyleSheet.create({
     detailText: {
         fontSize: 14,
         color: '#7f8c8d',
+        flex: 1,
+    },
+    detailRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
         marginBottom: 4,
+    },
+    boldDetail: {
+        fontWeight: 'bold',
+        color: '#2c3e50',
     },
     fab: {
         position: 'absolute',

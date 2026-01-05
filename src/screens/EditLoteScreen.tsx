@@ -76,7 +76,9 @@ export default function EditLoteScreen({ route, navigation }: Props) {
             poblacion_inicial: parseInt(poblacionInicial),
             poblacion_actual: parseInt(poblacionActual || poblacionInicial),
             finca_id: fincaId,
+            finca_nombre: fincas.find(f => f.id === fincaId)?.nombre || '',
             galpon_id: galponId,
+            galpon_nombre: galpones.find(g => g.id === galponId)?.nombre || '',
             precio_compra_unitario: parseFloat(precioCompraUnitario || '0'),
         };
 

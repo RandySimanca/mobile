@@ -6,9 +6,12 @@ import {
     ScrollView,
     ActivityIndicator,
     RefreshControl,
+    TouchableOpacity,
+    Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import apiService from '../services/api-service';
+import { generateResumenGlobalPDF } from '../utils/pdfGenerator';
 
 export default function GlobalSummaryScreen() {
     const [summary, setSummary] = useState<any>(null);
@@ -39,6 +42,15 @@ export default function GlobalSummaryScreen() {
         loadSummary();
     };
 
+    const handleExportPDF = async () => {
+        if (!summary) return;
+        try {
+            await generateResumenGlobalPDF(summary);
+        } catch (error) {
+            Alert.alert('Error', 'No se pudo generar el reporte PDF');
+        }
+    };
+
     const formatCurrency = (amount: number) => {
         return new Intl.NumberFormat('es-CO', {
             style: 'currency',
@@ -66,8 +78,13 @@ export default function GlobalSummaryScreen() {
     return (
         <View style={styles.container}>
             <View style={styles.header}>
-                <Text style={styles.title}>Resumen Global</Text>
-                <Text style={styles.subtitle}>Estado contable de toda la granja</Text>
+                <View>
+                    <Text style={styles.title}>Resumen Global</Text>
+                    <Text style={styles.subtitle}>Estado contable de toda la granja</Text>
+                </View>
+                <TouchableOpacity onPress={handleExportPDF} style={styles.exportButton}>
+                    <Ionicons name="download-outline" size={28} color="#27ae60" />
+                </TouchableOpacity>
             </View>
 
             <ScrollView
@@ -79,17 +96,25 @@ export default function GlobalSummaryScreen() {
                 {summary && (
                     <>
                         {/* Sección 1: Dinero Disponible (Destacado) */}
-                        <View style={[styles.card, styles.highlightCard]}>
+                        <View style={[
+                            styles.card,
+                            styles.highlightCard,
+                            summary.flujo_caja.caja_actual < 0 ? styles.highlightCardNegative : null
+                        ]}>
                             <Ionicons name="wallet" size={40} color="#fff" />
                             <Text style={styles.highlightLabel}>Dinero Disponible en Caja</Text>
                             <Text style={styles.highlightValue}>
                                 {formatCurrency(summary.flujo_caja.caja_actual)}
                             </Text>
+                            {summary.flujo_caja.caja_actual < 0 && (
+                                <Text style={styles.warningText}>
+                                    ⚠️ Caja en déficit
+                                </Text>
+                            )}
                             <Text style={styles.highlightSub}>
                                 Este es el dinero real que tienes disponible actualmente
                             </Text>
                         </View>
-
                         {/* Sección 2: Flujo de Caja Detallado */}
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
@@ -97,7 +122,8 @@ export default function GlobalSummaryScreen() {
                                 <Text style={styles.sectionTitle}>Movimiento de Dinero (Caja)</Text>
                             </View>
                             <View style={styles.card}>
-                                {renderRow('Ventas realizadas', summary.flujo_caja.total_ingresos, '#2ecc71')}
+                                {renderRow('Ventas de contado (efectivo recibido)', summary.flujo_caja.total_ingresos_contado, '#2ecc71')}
+                                {renderRow('Ventas a crédito (pendiente cobro)', summary.flujo_caja.cuentas_por_cobrar, '#f39c12')}
                                 {renderRow('Gastos operativos (Nómina, servicios...)', summary.flujo_caja.gastos_operativos, '#e74c3c')}
                                 {renderRow('Compras de insumos', summary.flujo_caja.inversion_insumos, '#f39c12')}
                                 <View style={styles.divider} />
@@ -128,27 +154,26 @@ export default function GlobalSummaryScreen() {
                             </View>
                         </View>
 
-                        {/* Sección 4: Patrimonio Total */}
+                        {/* Sección 4: ACTIVOS (Patrimonio) */}
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
                                 <Ionicons name="business-outline" size={20} color="#34495e" />
-                                <Text style={styles.sectionTitle}>Patrimonio Total</Text>
+                                <Text style={styles.sectionTitle}>ACTIVOS (Patrimonio)</Text>
                             </View>
                             <View style={styles.card}>
-                                {renderRow('Efectivo en caja', summary.balance.efectivo, '#2ecc71')}
-                                {renderRow('Valor del inventario', summary.balance.inventario, '#3498db')}
+                                <Text style={styles.subSectionTitle}>Activos Corrientes</Text>
+                                {renderRow('Efectivo en Caja', summary.balance.efectivo, '#2ecc71')}
+                                {renderRow('Cuentas por Cobrar', summary.balance.cuentas_por_cobrar, '#f39c12')}
+                                {renderRow('Inventarios (Insumos)', summary.balance.inventario, '#3498db')}
                                 <View style={styles.divider} />
                                 <View style={styles.totalRow}>
-                                    <Text style={styles.totalLabel}>Patrimonio Total</Text>
+                                    <Text style={styles.totalLabel}>TOTAL ACTIVOS</Text>
                                     <Text style={[styles.totalValue, {
                                         color: summary.balance.activo_total >= 0 ? '#2ecc71' : '#e74c3c'
                                     }]}>
                                         {formatCurrency(summary.balance.activo_total)}
                                     </Text>
                                 </View>
-                                <Text style={styles.infoText}>
-                                    Patrimonio = Efectivo + Inventario (lo que realmente tienes)
-                                </Text>
                             </View>
                         </View>
 
@@ -200,6 +225,14 @@ const styles = StyleSheet.create({
         backgroundColor: '#fff',
         borderBottomWidth: 1,
         borderBottomColor: '#eee',
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    exportButton: {
+        padding: 8,
+        backgroundColor: '#f0f9f4',
+        borderRadius: 12,
     },
     title: {
         fontSize: 24,
@@ -241,6 +274,19 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingVertical: 30,
     },
+    highlightCardNegative: {
+        backgroundColor: '#e74c3c',
+    },
+    warningText: {
+        color: '#fff',
+        fontSize: 14,
+        fontWeight: 'bold',
+        backgroundColor: 'rgba(0,0,0,0.2)',
+        paddingHorizontal: 12,
+        paddingVertical: 4,
+        borderRadius: 20,
+        marginBottom: 5,
+    },
     highlightLabel: {
         color: 'rgba(255,255,255,0.9)',
         fontSize: 16,
@@ -274,19 +320,31 @@ const styles = StyleSheet.create({
         color: '#34495e',
         marginLeft: 8,
     },
+    subSectionTitle: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#95a5a6',
+        textTransform: 'uppercase',
+        marginBottom: 10,
+        letterSpacing: 0.5,
+    },
     row: {
         flexDirection: 'row',
         justifyContent: 'space-between',
+        alignItems: 'center',
         paddingVertical: 8,
     },
     rowLabel: {
         color: '#7f8c8d',
         fontSize: 15,
+        flex: 1,
+        marginRight: 10,
     },
     rowValue: {
         color: '#2c3e50',
         fontSize: 15,
         fontWeight: '500',
+        textAlign: 'right',
     },
     divider: {
         height: 1,
@@ -296,17 +354,21 @@ const styles = StyleSheet.create({
     totalRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
+        alignItems: 'center',
         marginTop: 5,
     },
     totalLabel: {
         fontSize: 16,
         fontWeight: 'bold',
         color: '#2c3e50',
+        flex: 1,
+        marginRight: 10,
     },
     totalValue: {
         fontSize: 16,
         fontWeight: 'bold',
         color: '#2c3e50',
+        textAlign: 'right',
     },
     infoText: {
         fontSize: 12,

@@ -1,16 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, ActivityIndicator, Alert, TouchableOpacity, ScrollView } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import LoteSelector from '../components/LoteSelector';
 import apiService from '../services/api-service';
+import { generateVentaPDF } from '../utils/pdfGenerator';
+import { useNavigation } from '@react-navigation/native';
 
 type FilterType = 'TODO' | 'VENTAS' | 'POSTURA' | 'ALIMENTO' | 'MORTALIDAD';
 
 export default function RegistrosHistoryScreen() {
+    const navigation = useNavigation<any>();
     const [selectedLote, setSelectedLote] = useState<any>(null);
     const [registros, setRegistros] = useState<any[]>([]);
     const [filteredRegistros, setFilteredRegistros] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [activeFilter, setActiveFilter] = useState<FilterType>('TODO');
+    const [currentUser, setCurrentUser] = useState<any>(null);
+
+    useEffect(() => {
+        const loadUser = async () => {
+            const user = await apiService.getCurrentUser();
+            setCurrentUser(user);
+        };
+        loadUser();
+    }, []);
 
     useEffect(() => {
         if (selectedLote) {
@@ -24,6 +37,10 @@ export default function RegistrosHistoryScreen() {
     useEffect(() => {
         applyFilter();
     }, [activeFilter, registros]);
+
+    const isAdmin = () => {
+        return currentUser?.role === 'ADMIN' || currentUser?.role === 'PROPIETARIO';
+    };
 
     const applyFilter = () => {
         if (activeFilter === 'TODO') {
@@ -43,27 +60,34 @@ export default function RegistrosHistoryScreen() {
     };
 
     const loadRegistros = async () => {
-        console.log('Cargando registros para lote:', selectedLote.id);
         setLoading(true);
         try {
             const [respRegistros, respVentas, pendingRecords] = await Promise.all([
                 apiService.getRegistrosDiariosPorLote(selectedLote.id),
                 apiService.getVentasPorLote(selectedLote.id),
-                apiService.getPendingRecords()
+                apiService.getPendingRecords('ventas') // Ajustado para usar el tipo correcto
             ]);
 
             if (respRegistros.success && respVentas.success) {
-                const registrosData = (respRegistros.data || []).map(r => ({ ...r, tipo_registro: 'DIARIO' }));
-                const ventasData = (respVentas.data || []).map(v => ({ ...v, tipo_registro: 'VENTA' }));
+                const registrosData = (respRegistros.data || []).map(r => ({
+                    ...r,
+                    tipo_registro: 'DIARIO',
+                    lote_nombre: selectedLote.nombre
+                }));
+                const ventasData = (respVentas.data || []).map(v => ({
+                    ...v,
+                    tipo_registro: 'VENTA',
+                    lote_nombre: selectedLote.nombre
+                }));
 
                 // Filtrar registros pendientes para este lote
-                const pendingData = pendingRecords
-                    .filter(p => p.datos.lote_id === selectedLote.id)
-                    .map(p => ({
-                        ...p.datos,
-                        id: p.id,
-                        tipo_registro: p.tabla === 'ventas' ? 'VENTA' : 'DIARIO',
-                        isPending: true
+                const pendingData = (pendingRecords || [])
+                    .filter((p: any) => p.lote_id === selectedLote.id)
+                    .map((p: any) => ({
+                        ...p,
+                        tipo_registro: 'VENTA', // Por ahora solo ventas pendientes en este flujo
+                        isPending: true,
+                        lote_nombre: selectedLote.nombre
                     }));
 
                 const combined = [...registrosData, ...ventasData, ...pendingData].sort((a, b) =>
@@ -81,92 +105,143 @@ export default function RegistrosHistoryScreen() {
         }
     };
 
-    const renderItem = ({ item }: any) => {
-        const isMortalidad = activeFilter === 'MORTALIDAD';
-        const isPostura = activeFilter === 'POSTURA';
-        const isAlimento = activeFilter === 'ALIMENTO';
-        const isVenta = activeFilter === 'VENTAS' || item.tipo_registro === 'VENTA';
-
+    const handleEdit = (item: any) => {
         if (item.tipo_registro === 'VENTA') {
-            return (
-                <View style={[styles.card, isVenta && styles.highlightedCardVenta]}>
-                    <View style={styles.cardHeader}>
+            navigation.navigate('EditarVenta', { venta: item });
+        } else if (item.mortalidad_dia > 0) {
+            navigation.navigate('EditarMortalidad', { registro: item });
+        } else {
+            Alert.alert('Info', 'La edición para este tipo de registro aún no está disponible.');
+        }
+    };
+
+    const handleDelete = (item: any) => {
+        const isVenta = item.tipo_registro === 'VENTA';
+        const title = isVenta ? 'Eliminar Venta' : 'Eliminar Registro';
+        const message = isVenta
+            ? `¿Estás seguro de eliminar la venta de ${item.cantidad} aves? Se restaurará la población del lote.`
+            : `¿Estás seguro de eliminar este registro?`;
+
+        Alert.alert(title, message, [
+            { text: 'Cancelar', style: 'cancel' },
+            {
+                text: 'Eliminar',
+                style: 'destructive',
+                onPress: async () => {
+                    try {
+                        const response = isVenta
+                            ? await apiService.deleteVenta(item.id)
+                            : await apiService.deleteRegistroDiario(item.id);
+
+                        if (response.success) {
+                            Alert.alert('Éxito', 'Registro eliminado correctamente');
+                            loadRegistros();
+                        } else {
+                            Alert.alert('Error', response.error || 'No se pudo eliminar');
+                        }
+                    } catch (error) {
+                        Alert.alert('Error', 'Ocurrió un error inesperado');
+                    }
+                }
+            }
+        ]);
+    };
+
+    const handleInvoice = async (venta: any) => {
+        try {
+            await generateVentaPDF(venta);
+        } catch (error) {
+            Alert.alert('Error', 'No se pudo generar la factura');
+        }
+    };
+
+    const renderItem = ({ item }: any) => {
+        const isMortalidad = activeFilter === 'MORTALIDAD' || (item.mortalidad_dia > 0 && item.tipo_registro === 'DIARIO');
+        const isPostura = activeFilter === 'POSTURA' || (item.huevos_totales > 0 && item.tipo_registro === 'DIARIO');
+        const isAlimento = activeFilter === 'ALIMENTO' || (item.alimento_consumido_kg > 0 && item.tipo_registro === 'DIARIO');
+        const isVenta = item.tipo_registro === 'VENTA';
+
+        return (
+            <View style={[styles.card, isVenta && styles.highlightedCardVenta]}>
+                <View style={styles.cardHeader}>
+                    <View>
                         <Text style={styles.dateText}>{new Date(item.fecha).toLocaleDateString()}</Text>
-                        {item.isPending ? (
-                            <View style={styles.badgePending}>
-                                <Text style={styles.badgeText}>PENDIENTE</Text>
-                            </View>
-                        ) : (
-                            <View style={styles.badgeVenta}>
+                        {isVenta && (
+                            <View style={[styles.badge, styles.badgeVenta]}>
                                 <Text style={styles.badgeText}>VENTA</Text>
                             </View>
                         )}
-                    </View>
-                    <View style={styles.cardBody}>
-                        <View style={[styles.row, styles.highlightedRowVenta]}>
-                            <Text style={styles.highlightedLabelVenta}>Cantidad Vendida:</Text>
-                            <Text style={styles.highlightedValueVenta}>{item.cantidad} aves</Text>
-                        </View>
-                        <View style={styles.row}>
-                            <Text style={styles.label}>Cliente:</Text>
-                            <Text style={styles.value}>{item.cliente}</Text>
-                        </View>
-                        <View style={styles.row}>
-                            <Text style={styles.label}>Precio Unitario:</Text>
-                            <Text style={styles.value}>${item.precio_unitario?.toLocaleString()}</Text>
-                        </View>
-                        <View style={styles.row}>
-                            <Text style={styles.label}>Total:</Text>
-                            <Text style={styles.value}>${item.total?.toLocaleString()}</Text>
-                        </View>
-                        <View style={styles.row}>
-                            <Text style={styles.label}>Pago:</Text>
-                            <Text style={styles.value}>{
-                                item.forma_pago === 'CONTADO_EFECTIVO' ? 'Contado (Efectivo)' :
-                                    item.forma_pago === 'CONTADO_TRANSFERENCIA' ? 'Contado (Transf.)' :
-                                        item.forma_pago === 'CREDITO' ? 'Crédito' : item.forma_pago || 'N/A'
-                            }</Text>
-                        </View>
-                        {item.observaciones ? (
-                            <View style={styles.observations}>
-                                <Text style={styles.obsLabel}>Obs:</Text>
-                                <Text style={styles.obsText}>{item.observaciones}</Text>
+                        {item.isPending && (
+                            <View style={[styles.badge, styles.badgePending]}>
+                                <Text style={styles.badgeText}>PENDIENTE</Text>
                             </View>
-                        ) : null}
+                        )}
+                    </View>
+
+                    <View style={styles.headerActions}>
+                        {isVenta && !item.isPending && (
+                            <TouchableOpacity onPress={() => handleInvoice(item)} style={styles.actionIcon}>
+                                <Ionicons name="document-text-outline" size={22} color="#27ae60" />
+                            </TouchableOpacity>
+                        )}
+                        {isAdmin() && !item.isPending && (
+                            <>
+                                <TouchableOpacity onPress={() => handleEdit(item)} style={styles.actionIcon}>
+                                    <Ionicons name="pencil-outline" size={22} color="#3498db" />
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => handleDelete(item)} style={styles.actionIcon}>
+                                    <Ionicons name="trash-outline" size={22} color="#e74c3c" />
+                                </TouchableOpacity>
+                            </>
+                        )}
                     </View>
                 </View>
-            );
-        }
 
-        return (
-            <View style={styles.card}>
-                <View style={styles.cardHeader}>
-                    <Text style={styles.dateText}>{new Date(item.fecha).toLocaleDateString()}</Text>
-                    {item.isPending && (
-                        <View style={styles.badgePending}>
-                            <Text style={styles.badgeText}>PENDIENTE</Text>
-                        </View>
-                    )}
-                </View>
                 <View style={styles.cardBody}>
-                    {(activeFilter === 'TODO' || isMortalidad) && (
-                        <View style={[styles.row, isMortalidad && styles.highlightedRow]}>
-                            <Text style={[styles.label, isMortalidad && styles.highlightedLabel]}>Mortalidad:</Text>
-                            <Text style={[styles.value, isMortalidad && styles.highlightedValue]}>{item.mortalidad_dia} aves</Text>
-                        </View>
+                    {isVenta ? (
+                        <>
+                            <View style={[styles.row, styles.highlightedRowVenta]}>
+                                <Text style={styles.highlightedLabelVenta}>Cantidad:</Text>
+                                <Text style={styles.highlightedValueVenta}>{item.cantidad} aves</Text>
+                            </View>
+                            <View style={styles.row}>
+                                <Text style={styles.label}>Cliente:</Text>
+                                <Text style={styles.value}>{item.cliente}</Text>
+                            </View>
+                            <View style={styles.row}>
+                                <Text style={styles.label}>Total:</Text>
+                                <Text style={styles.value}>${item.total?.toLocaleString()}</Text>
+                            </View>
+                            {item.abono > 0 && (
+                                <View style={styles.row}>
+                                    <Text style={styles.label}>Abono:</Text>
+                                    <Text style={[styles.value, { color: '#27ae60' }]}>${item.abono?.toLocaleString()}</Text>
+                                </View>
+                            )}
+                        </>
+                    ) : (
+                        <>
+                            {(activeFilter === 'TODO' || isMortalidad) && item.mortalidad_dia > 0 && (
+                                <View style={[styles.row, isMortalidad && styles.highlightedRow]}>
+                                    <Text style={[styles.label, isMortalidad && styles.highlightedLabel]}>Mortalidad:</Text>
+                                    <Text style={[styles.value, isMortalidad && styles.highlightedValue]}>{item.mortalidad_dia} aves</Text>
+                                </View>
+                            )}
+                            {(activeFilter === 'TODO' || isAlimento) && item.alimento_consumido_kg > 0 && (
+                                <View style={[styles.row, isAlimento && styles.highlightedRow]}>
+                                    <Text style={[styles.label, isAlimento && styles.highlightedLabel]}>Alimento:</Text>
+                                    <Text style={[styles.value, isAlimento && styles.highlightedValue]}>{item.alimento_consumido_kg} kg</Text>
+                                </View>
+                            )}
+                            {(activeFilter === 'TODO' || isPostura) && item.huevos_totales > 0 && (
+                                <View style={[styles.row, isPostura && styles.highlightedRow]}>
+                                    <Text style={[styles.label, isPostura && styles.highlightedLabel]}>Postura:</Text>
+                                    <Text style={[styles.value, isPostura && styles.highlightedValue]}>{item.huevos_totales} huevos</Text>
+                                </View>
+                            )}
+                        </>
                     )}
-                    {(activeFilter === 'TODO' || isAlimento) && (
-                        <View style={[styles.row, isAlimento && styles.highlightedRow]}>
-                            <Text style={[styles.label, isAlimento && styles.highlightedLabel]}>Alimento:</Text>
-                            <Text style={[styles.value, isAlimento && styles.highlightedValue]}>{item.alimento_consumido_kg} kg</Text>
-                        </View>
-                    )}
-                    {(activeFilter === 'TODO' || isPostura) && item.huevos_totales !== undefined && (
-                        <View style={[styles.row, isPostura && styles.highlightedRow]}>
-                            <Text style={[styles.label, isPostura && styles.highlightedLabel]}>Postura:</Text>
-                            <Text style={[styles.value, isPostura && styles.highlightedValue]}>{item.huevos_totales} huevos</Text>
-                        </View>
-                    )}
+
                     {item.observaciones ? (
                         <View style={styles.observations}>
                             <Text style={styles.obsLabel}>Obs:</Text>
@@ -258,10 +333,21 @@ const styles = StyleSheet.create({
         shadowRadius: 4,
     },
     cardHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
         borderBottomWidth: 1,
         borderBottomColor: '#f0f0f0',
         paddingBottom: 8,
         marginBottom: 10,
+    },
+    headerActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    actionIcon: {
+        padding: 5,
+        marginLeft: 10,
     },
     dateText: {
         fontSize: 16,
@@ -369,23 +455,18 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: 'bold',
     },
-    badgeVenta: {
-        backgroundColor: '#e67e22',
+    badge: {
         paddingHorizontal: 8,
         paddingVertical: 2,
         borderRadius: 4,
-        position: 'absolute',
-        right: 0,
-        top: 0,
+        alignSelf: 'flex-start',
+        marginTop: 4,
+    },
+    badgeVenta: {
+        backgroundColor: '#e67e22',
     },
     badgePending: {
         backgroundColor: '#95a5a6',
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: 4,
-        position: 'absolute',
-        right: 0,
-        top: 0,
     },
     badgeText: {
         color: '#fff',

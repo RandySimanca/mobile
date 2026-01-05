@@ -1,30 +1,21 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
-import LoteSelector from '../components/LoteSelector';
 import apiService from '../services/api-service';
-import { DrawerNavigationProp } from '@react-navigation/drawer';
-import { RootDrawerParamList } from '../navigation/AppNavigator';
 
-type CreateVentaScreenNavigationProp = DrawerNavigationProp<RootDrawerParamList, 'CreateVenta'>;
+export default function EditarVentaScreen({ navigation, route }: any) {
+    const { venta } = route.params;
 
-interface Props {
-    navigation: CreateVentaScreenNavigationProp;
-}
-
-export default function CreateVentaScreen({ navigation }: Props) {
-    const [loteId, setLoteId] = useState('');
-    const [loteNombre, setLoteNombre] = useState('');
-    const [cantidad, setCantidad] = useState('');
-    const [precioUnitario, setPrecioUnitario] = useState('');
-    const [cliente, setCliente] = useState('');
-    const [formaPago, setFormaPago] = useState('CONTADO_EFECTIVO');
-    const [observaciones, setObservaciones] = useState('');
-    const [abono, setAbono] = useState('');
+    const [cantidad, setCantidad] = useState(venta.cantidad.toString());
+    const [precioUnitario, setPrecioUnitario] = useState(venta.precio_unitario.toString());
+    const [cliente, setCliente] = useState(venta.cliente);
+    const [formaPago, setFormaPago] = useState(venta.forma_pago);
+    const [observaciones, setObservaciones] = useState(venta.observaciones || '');
+    const [abono, setAbono] = useState(venta.abono?.toString() || '0');
     const [loading, setLoading] = useState(false);
 
     const handleSubmit = async () => {
-        if (!loteId || !cantidad || !precioUnitario || !cliente || !formaPago) {
+        if (!cantidad || !precioUnitario || !cliente || !formaPago) {
             Alert.alert('Error', 'Por favor completa los campos obligatorios');
             return;
         }
@@ -51,48 +42,27 @@ export default function CreateVentaScreen({ navigation }: Props) {
         }
 
         const data = {
-            lote_id: loteId,
-            lote_nombre: loteNombre,
+            ...venta,
             cantidad: cant,
             precio_unitario: precio,
             total,
             abono: abonoVal,
             cliente,
             forma_pago: formaPago,
-            fecha: new Date().toISOString(),
-            observaciones: observaciones.trim() || null
+            observaciones: observaciones.trim() || null,
+            lote_nombre: venta.lote_nombre // Asegurar que se mantenga
         };
 
         setLoading(true);
         try {
-            let response;
-            const isOnline = apiService.getConnectionStatus();
-
-            if (isOnline) {
-                response = await apiService.createVenta(data);
-                if (!response.success && response.isNetworkError) {
-                    await apiService.savePendingRecord('ventas', data);
-                    response = { success: true, offline: true } as any;
-                }
-            } else {
-                await apiService.savePendingRecord('ventas', data);
-                response = { success: true, offline: true } as any;
-            }
-
+            const response = await apiService.updateVenta(venta.id, data);
             if (response.success) {
-                const isOffline = (response as any).offline;
-                Alert.alert(
-                    isOffline ? 'Guardado Local' : 'Éxito',
-                    isOffline
-                        ? 'Venta guardada localmente. Se sincronizará cuando haya conexión.'
-                        : 'Venta registrada correctamente'
-                );
+                Alert.alert('Éxito', 'Venta actualizada correctamente');
                 navigation.goBack();
             } else {
-                Alert.alert('Error', response.error || 'No se pudo registrar la venta');
+                Alert.alert('Error', response.error || 'No se pudo actualizar la venta');
             }
         } catch (error) {
-            console.error('Error inesperado:', error);
             Alert.alert('Error', 'Ocurrió un error inesperado');
         } finally {
             setLoading(false);
@@ -111,10 +81,8 @@ export default function CreateVentaScreen({ navigation }: Props) {
     return (
         <ScrollView style={styles.container}>
             <View style={styles.form}>
-                <Text style={styles.title}>Registrar Venta de Aves</Text>
-
-                <Text style={styles.label}>Lote *</Text>
-                <LoteSelector onSelect={(lote) => { setLoteId(lote.id); setLoteNombre(lote.nombre); }} selectedLoteId={loteId} />
+                <Text style={styles.title}>Editar Venta</Text>
+                <Text style={styles.subtitle}>Lote: {venta.lote_nombre || 'N/A'}</Text>
 
                 <Text style={styles.label}>Cantidad de Aves *</Text>
                 <TextInput
@@ -198,7 +166,7 @@ export default function CreateVentaScreen({ navigation }: Props) {
                     {loading ? (
                         <ActivityIndicator color="#fff" />
                     ) : (
-                        <Text style={styles.buttonText}>Registrar Venta</Text>
+                        <Text style={styles.buttonText}>Actualizar Venta</Text>
                     )}
                 </TouchableOpacity>
             </View>
@@ -218,7 +186,12 @@ const styles = StyleSheet.create({
         fontSize: 20,
         fontWeight: 'bold',
         color: '#2c3e50',
+    },
+    subtitle: {
+        fontSize: 14,
+        color: '#7f8c8d',
         marginBottom: 20,
+        marginTop: 5,
     },
     label: {
         fontSize: 14,
@@ -271,14 +244,14 @@ const styles = StyleSheet.create({
         color: '#27ae60',
     },
     button: {
-        backgroundColor: '#e67e22',
+        backgroundColor: '#3498db',
         padding: 15,
         borderRadius: 8,
         alignItems: 'center',
         marginTop: 30,
     },
     buttonDisabled: {
-        backgroundColor: '#f39c12',
+        backgroundColor: '#bdc3c7',
         opacity: 0.7,
     },
     buttonText: {

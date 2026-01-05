@@ -34,6 +34,7 @@ import GlobalSummaryScreen from '../screens/GlobalSummaryScreen';
 import GastosScreen from '../screens/GastosScreen';
 import RegistrosMortalidadScreen from '../screens/RegistrosMortalidadScreen';
 import EditarMortalidadScreen from '../screens/EditarMortalidadScreen';
+import EditarVentaScreen from '../screens/EditarVentaScreen';
 
 export type AuthStackParamList = {
     Login: undefined;
@@ -65,6 +66,7 @@ export type RootDrawerParamList = {
     Gastos: undefined;
     RegistrosMortalidad: undefined;
     EditarMortalidad: { registro: any };
+    EditarVenta: { venta: any };
 };
 
 const Stack = createNativeStackNavigator<AuthStackParamList>();
@@ -177,10 +179,7 @@ function MainDrawer() {
             <Drawer.Screen
                 name="RegistrosMortalidad"
                 component={RegistrosMortalidadScreen}
-                options={{
-                    title: 'Historial Mortalidad',
-                    drawerIcon: ({ color, size }) => <Ionicons name="skull-outline" size={size} color={color} />
-                }}
+                options={{ drawerItemStyle: { display: 'none' }, title: 'Historial Mortalidad' }}
             />
             <Drawer.Screen
                 name="EditarMortalidad"
@@ -244,6 +243,14 @@ function MainDrawer() {
                 component={CreateVentaScreen}
                 options={{
                     title: 'Nueva Venta',
+                    drawerItemStyle: { display: 'none' },
+                }}
+            />
+            <Drawer.Screen
+                name="EditarVenta"
+                component={EditarVentaScreen}
+                options={{
+                    title: 'Editar Venta',
                     drawerItemStyle: { display: 'none' },
                 }}
             />

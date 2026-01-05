@@ -83,6 +83,19 @@ export default function VentasScreen({ navigation }: Props) {
         }
     };
 
+    const handleEdit = (item: any) => {
+        navigation.navigate('EditarVenta', { venta: item });
+    };
+
+    const handleInvoice = async (venta: any) => {
+        try {
+            const { generateVentaPDF } = require('../utils/pdfGenerator');
+            await generateVentaPDF(venta);
+        } catch (error) {
+            Alert.alert('Error', 'No se pudo generar la factura');
+        }
+    };
+
     const isAdmin = () => {
         return currentUser?.role === 'ADMIN' || currentUser?.role === 'PROPIETARIO';
     };
@@ -96,17 +109,12 @@ export default function VentasScreen({ navigation }: Props) {
                         month: 'short',
                         day: 'numeric'
                     })}</Text>
+                    {item.lote_nombre && (
+                        <Text style={styles.loteNameText}>Lote: {item.lote_nombre}</Text>
+                    )}
                 </View>
                 <View style={styles.headerRight}>
                     <Text style={styles.totalText}>${item.total.toLocaleString('es-CO')}</Text>
-                    {isAdmin() && (
-                        <TouchableOpacity
-                            onPress={() => handleDeleteVenta(item)}
-                            style={styles.deleteButton}
-                        >
-                            <Ionicons name="trash-outline" size={20} color="#e74c3c" />
-                        </TouchableOpacity>
-                    )}
                 </View>
             </View>
             <View style={styles.cardBody}>
@@ -122,6 +130,12 @@ export default function VentasScreen({ navigation }: Props) {
                     <Text style={styles.label}>Precio Unit:</Text>
                     <Text style={styles.value}>${item.precio_unitario.toLocaleString('es-CO')}</Text>
                 </View>
+                {item.abono > 0 && (
+                    <View style={styles.row}>
+                        <Text style={styles.label}>Abono:</Text>
+                        <Text style={[styles.value, { color: '#27ae60' }]}>${item.abono.toLocaleString('es-CO')}</Text>
+                    </View>
+                )}
                 <View style={styles.row}>
                     <Text style={styles.label}>Pago:</Text>
                     <Text style={[styles.value, styles.paymentBadge, {
@@ -138,6 +152,25 @@ export default function VentasScreen({ navigation }: Props) {
                         <Text style={styles.obsText}>{item.observaciones}</Text>
                     </View>
                 ) : null}
+
+                <View style={styles.cardActions}>
+                    <TouchableOpacity onPress={() => handleInvoice(item)} style={styles.actionButton}>
+                        <Ionicons name="document-text-outline" size={22} color="#27ae60" />
+                        <Text style={[styles.actionText, { color: '#27ae60' }]}>Factura</Text>
+                    </TouchableOpacity>
+                    {isAdmin() && (
+                        <>
+                            <TouchableOpacity onPress={() => handleEdit(item)} style={styles.actionButton}>
+                                <Ionicons name="pencil-outline" size={22} color="#3498db" />
+                                <Text style={[styles.actionText, { color: '#3498db' }]}>Editar</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => handleDeleteVenta(item)} style={styles.actionButton}>
+                                <Ionicons name="trash-outline" size={22} color="#e74c3c" />
+                                <Text style={[styles.actionText, { color: '#e74c3c' }]}>Eliminar</Text>
+                            </TouchableOpacity>
+                        </>
+                    )}
+                </View>
             </View>
         </View>
     );
@@ -214,13 +247,15 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: '#2c3e50',
     },
+    loteNameText: {
+        fontSize: 12,
+        color: '#7f8c8d',
+        marginTop: 2,
+    },
     totalText: {
         fontSize: 18,
         fontWeight: 'bold',
         color: '#27ae60',
-    },
-    deleteButton: {
-        padding: 5,
     },
     cardBody: {
         gap: 8,
@@ -260,6 +295,24 @@ const styles = StyleSheet.create({
         fontSize: 13,
         color: '#6c757d',
         fontStyle: 'italic',
+    },
+    cardActions: {
+        flexDirection: 'row',
+        justifyContent: 'space-around',
+        marginTop: 10,
+        paddingTop: 10,
+        borderTopWidth: 1,
+        borderTopColor: '#f0f0f0',
+    },
+    actionButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        padding: 5,
+    },
+    actionText: {
+        fontSize: 12,
+        fontWeight: 'bold',
     },
     fab: {
         position: 'absolute',

@@ -27,7 +27,9 @@ export default function CreateLoteScreen({ navigation }: any) {
                 poblacion_inicial: Number(poblacionInicial),
                 precio_compra_unitario: Number(precioCompraUnitario),
                 finca_id: selectedFinca.id,
+                finca_nombre: selectedFinca.nombre,
                 galpon_id: selectedGalpon.id,
+                galpon_nombre: selectedGalpon.nombre,
                 fecha_ingreso: new Date().toISOString()
             };
 
